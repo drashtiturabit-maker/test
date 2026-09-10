@@ -1,0 +1,74 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: cx_chatbot
+      POSTGRES_USER: cx_user
+      POSTGRES_PASSWORD: cx_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    env_file: .env
+    depends_on:
+      - postgres
+      - redis
+      - scraper
+      - training
+    volumes:
+      - ./backend/uploads:/app/uploads
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  celery_worker:
+    build: ./backend
+    env_file: .env
+    depends_on:
+      - redis
+      - postgres
+      - scraper
+      - training
+    volumes:
+      - ./backend/uploads:/app/uploads
+    command: celery -A app.tasks.training_tasks.celery_app worker -Q training -c 2 --loglevel=info
+
+  scraper:
+    build: ./scraper-service
+    ports:
+      - "8001:8001"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001
+
+  training:
+    build: ./training-service
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./backend/uploads:/app/uploads
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8002
+
+  dashboard:
+    build: ./dashboard
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+  webchat:
+    build: ./webchat
+    ports:
+      - "5174:80"
+
+volumes:
+  pgdata:
